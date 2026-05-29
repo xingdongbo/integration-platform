@@ -15,7 +15,8 @@ import com.company.integration.mapping.ApiMappingRequest;
 import com.company.integration.mapping.ApiMappingRequestService;
 import com.company.integration.mapping.ApiMappingResponse;
 import com.company.integration.mapping.ApiMappingResponseService;
-import com.company.integration.mapping.MappingEngine;
+import com.company.integration.mapping.RequestMappingEngine;
+import com.company.integration.mapping.ResponseMappingEngine;
 import com.company.integration.retry.ApiRetryTask;
 import com.company.integration.retry.ApiRetryTaskService;
 import com.company.integration.system.SysSystem;
@@ -38,7 +39,8 @@ public class ExchangeService {
     private final ApiMappingResponseService responseMappingService;
     private final ApiExchangeLogService logService;
     private final ApiRetryTaskService retryTaskService;
-    private final MappingEngine mappingEngine;
+    private final RequestMappingEngine requestMappingEngine;
+    private final ResponseMappingEngine responseMappingEngine;
     private final ApiExecutor apiExecutor;
     private final ObjectMapper objectMapper;
 
@@ -49,7 +51,8 @@ public class ExchangeService {
                            ApiMappingResponseService responseMappingService,
                            ApiExchangeLogService logService,
                            ApiRetryTaskService retryTaskService,
-                           MappingEngine mappingEngine,
+                           RequestMappingEngine requestMappingEngine,
+                           ResponseMappingEngine responseMappingEngine,
                            ApiExecutor apiExecutor,
                            ObjectMapper objectMapper) {
         this.interfaceService = interfaceService;
@@ -59,7 +62,8 @@ public class ExchangeService {
         this.responseMappingService = responseMappingService;
         this.logService = logService;
         this.retryTaskService = retryTaskService;
-        this.mappingEngine = mappingEngine;
+        this.requestMappingEngine = requestMappingEngine;
+        this.responseMappingEngine = responseMappingEngine;
         this.apiExecutor = apiExecutor;
         this.objectMapper = objectMapper;
     }
@@ -84,13 +88,14 @@ public class ExchangeService {
             List<ApiMappingRequest> requestRules = requestMappingService.list(new QueryWrapper<ApiMappingRequest>()
                     .eq("interface_code", interfaceCode)
                     .orderByAsc("sort"));
-            Map<String, Object> targetRequest = requestRules.isEmpty() ? sourceRequest : mappingEngine.mapRequest(sourceRequest, requestRules);
+            Map<String, Object> targetRequest = requestMappingEngine.map(sourceRequest, requestRules);
             updateLog(log, StatusConstants.MAPPED, targetRequest, null, null, null, start);
 
             String targetUrl = buildTargetUrl(targetSystem.baseUrl, apiInterface.targetUrl);
             List<ApiHeader> headers = headerService.list(new QueryWrapper<ApiHeader>().eq("interface_code", interfaceCode));
             updateLog(log, StatusConstants.CALLING, targetRequest, null, null, null, start);
             TargetApiResult targetResult = apiExecutor.execute(apiInterface, targetUrl, headers, targetRequest);
+            updateLog(log, StatusConstants.CALLING, targetRequest, targetResult.rawBody, null, null, start);
             if (!targetResult.successful) {
                 throw new BusinessException("target api returned HTTP " + targetResult.statusCode + ": " + targetResult.rawBody);
             }
@@ -98,7 +103,7 @@ public class ExchangeService {
             List<ApiMappingResponse> responseRules = responseMappingService.list(new QueryWrapper<ApiMappingResponse>()
                     .eq("interface_code", interfaceCode)
                     .orderByAsc("sort"));
-            Map<String, Object> sourceResponse = responseRules.isEmpty() ? targetResult.body : mappingEngine.mapResponse(targetResult.body, responseRules);
+            Map<String, Object> sourceResponse = responseMappingEngine.map(targetResult.body, responseRules);
             updateLog(log, StatusConstants.SUCCESS, targetRequest, targetResult.rawBody, sourceResponse, null, start);
             return new ExchangeResult(traceId, targetRequest, targetResult.rawBody, sourceResponse);
         } catch (Exception ex) {
